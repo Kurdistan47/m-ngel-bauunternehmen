@@ -1,0 +1,729 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  AlertTriangle,
+  Camera,
+  CheckCircle2,
+  ClipboardList,
+  Download,
+  FileText,
+  Filter,
+  Hammer,
+  Image as ImageIcon,
+  MapPin,
+  Plus,
+  Printer,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+
+const STORAGE_KEY = "baustelle_maengel_v1";
+
+const statusOptions = ["Offen", "In Bearbeitung", "Erledigt", "Abgenommen"];
+const priorityOptions = ["Niedrig", "Mittel", "Hoch", "Kritisch"];
+const tradeOptions = [
+  "Rohbau",
+  "Trockenbau",
+  "Elektro",
+  "Sanitaer",
+  "Heizung",
+  "Lueftung",
+  "Maler",
+  "Fliesen",
+  "Fenster/Tueren",
+  "Dach",
+  "Aussenanlage",
+  "Sonstiges",
+];
+
+const emptyForm = {
+  project: "Wohnanlage Musterstrasse",
+  title: "",
+  description: "",
+  location: "",
+  floor: "",
+  room: "",
+  trade: "Trockenbau",
+  company: "",
+  priority: "Mittel",
+  status: "Offen",
+  dueDate: "",
+  reporter: "",
+  notes: "",
+  photos: [],
+};
+
+const demoDefects = [
+  {
+    id: crypto.randomUUID(),
+    no: "M-001",
+    project: "Wohnanlage Musterstrasse",
+    title: "Rissbildung an GK-Wand",
+    description: "Vertikaler Riss im Anschlussbereich zur Decke, Nacharbeit erforderlich.",
+    location: "Haus A",
+    floor: "2. OG",
+    room: "Flur 2.12",
+    trade: "Trockenbau",
+    company: "Mustermann Ausbau GmbH",
+    priority: "Hoch",
+    status: "Offen",
+    dueDate: new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10),
+    reporter: "Bauleitung",
+    notes: "Bitte vor Malerarbeiten beheben.",
+    photos: [],
+    createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+    history: ["Mangel angelegt"],
+  },
+  {
+    id: crypto.randomUUID(),
+    no: "M-002",
+    project: "Wohnanlage Musterstrasse",
+    title: "Steckdose fehlt",
+    description: "Geplante Steckdose laut Plan E-04 wurde nicht gesetzt.",
+    location: "Haus B",
+    floor: "EG",
+    room: "Kueche B.03",
+    trade: "Elektro",
+    company: "Elektro Nord GmbH",
+    priority: "Mittel",
+    status: "In Bearbeitung",
+    dueDate: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+    reporter: "Polier",
+    notes: "Planstand vom 12.07. pruefen.",
+    photos: [],
+    createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+    updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+    history: ["Mangel angelegt", "Status auf In Bearbeitung gesetzt"],
+  },
+  {
+    id: crypto.randomUUID(),
+    no: "M-003",
+    project: "Wohnanlage Musterstrasse",
+    title: "Silikonfuge unsauber",
+    description: "Fuge am Waschtisch ungleichmaessig, optischer Mangel.",
+    location: "Haus A",
+    floor: "1. OG",
+    room: "Bad A.18",
+    trade: "Sanitaer",
+    company: "Sanitaer Becker",
+    priority: "Niedrig",
+    status: "Erledigt",
+    dueDate: new Date(Date.now() - 1 * 86400000).toISOString().slice(0, 10),
+    reporter: "Qualitaetssicherung",
+    notes: "Nacharbeit laut Firma abgeschlossen, Abnahme offen.",
+    photos: [],
+    createdAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+    updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+    history: ["Mangel angelegt", "Firma informiert", "Status auf Erledigt gesetzt"],
+  },
+];
+
+function classNames(...items) {
+  return items.filter(Boolean).join(" ");
+}
+
+function priorityClass(priority) {
+  return {
+    Niedrig: "bg-slate-100 text-slate-700 border-slate-200",
+    Mittel: "bg-blue-100 text-blue-800 border-blue-200",
+    Hoch: "bg-orange-100 text-orange-800 border-orange-200",
+    Kritisch: "bg-red-100 text-red-800 border-red-200",
+  }[priority];
+}
+
+function statusClass(status) {
+  return {
+    Offen: "bg-red-50 text-red-700 border-red-200",
+    "In Bearbeitung": "bg-amber-50 text-amber-700 border-amber-200",
+    Erledigt: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    Abgenommen: "bg-slate-900 text-white border-slate-900",
+  }[status];
+}
+
+function dateDE(value) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString("de-DE");
+}
+
+function daysUntil(value) {
+  if (!value) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / 86400000);
+}
+
+function nextNumber(defects) {
+  const max = defects.reduce((acc, d) => {
+    const n = Number(String(d.no || "").replace(/\D/g, ""));
+    return Number.isFinite(n) ? Math.max(acc, n) : acc;
+  }, 0);
+  return `M-${String(max + 1).padStart(3, "0")}`;
+}
+
+function exportCsv(defects) {
+  const headers = [
+    "Nr",
+    "Projekt",
+    "Titel",
+    "Beschreibung",
+    "Ort",
+    "Etage",
+    "Raum",
+    "Gewerk",
+    "Firma",
+    "Prioritaet",
+    "Status",
+    "Frist",
+    "Melder",
+    "Notizen",
+    "Erstellt",
+    "Aktualisiert",
+  ];
+  const rows = defects.map((d) => [
+    d.no,
+    d.project,
+    d.title,
+    d.description,
+    d.location,
+    d.floor,
+    d.room,
+    d.trade,
+    d.company,
+    d.priority,
+    d.status,
+    d.dueDate,
+    d.reporter,
+    d.notes,
+    d.createdAt,
+    d.updatedAt,
+  ]);
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(";"))
+    .join("\n");
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `maengelliste_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportJson(defects) {
+  const blob = new Blob([JSON.stringify(defects, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `maengelliste_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function StatCard({ title, value, icon: Icon, tone }) {
+  const tones = {
+    slate: "bg-slate-50 text-slate-900 border-slate-200",
+    red: "bg-red-50 text-red-900 border-red-200",
+    amber: "bg-amber-50 text-amber-900 border-amber-200",
+    emerald: "bg-emerald-50 text-emerald-900 border-emerald-200",
+  };
+  return (
+    <Card className={classNames("border shadow-sm", tones[tone])}>
+      <CardContent className="flex items-center justify-between p-4">
+        <div>
+          <p className="text-sm opacity-75">{title}</p>
+          <p className="mt-1 text-3xl font-bold">{value}</p>
+        </div>
+        <div className="rounded-2xl bg-white/70 p-3 shadow-sm">
+          <Icon className="h-6 w-6" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Field({ label, children, required }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm font-medium text-slate-700">
+        {label} {required && <span className="text-red-600">*</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function TextInput(props) {
+  return (
+    <input
+      {...props}
+      className={classNames(
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
+        props.className
+      )}
+    />
+  );
+}
+
+function SelectInput(props) {
+  return (
+    <select
+      {...props}
+      className={classNames(
+        "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200",
+        props.className
+      )}
+    />
+  );
+}
+
+function DefectForm({ form, setForm, onSubmit, editingId, onCancel }) {
+  async function handlePhotos(e) {
+    const files = Array.from(e.target.files || []).slice(0, 6);
+    const converted = [];
+    for (const file of files) {
+      const dataUrl = await fileToDataUrl(file);
+      converted.push({ name: file.name, dataUrl, size: file.size, type: file.type });
+    }
+    setForm((current) => ({ ...current, photos: [...current.photos, ...converted].slice(0, 8) }));
+    e.target.value = "";
+  }
+
+  function removePhoto(index) {
+    setForm((current) => ({ ...current, photos: current.photos.filter((_, i) => i !== index) }));
+  }
+
+  return (
+    <Card className="border-0 shadow-xl shadow-slate-200/70">
+      <CardContent className="p-5">
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-slate-950">
+              {editingId ? "Mangel bearbeiten" : "Neuen Mangel erfassen"}
+            </h2>
+            <p className="text-sm text-slate-500">Pflichtfelder ausfuellen, Fotos optional hochladen, dann speichern.</p>
+          </div>
+          {editingId && (
+            <Button variant="outline" onClick={onCancel} className="rounded-xl">
+              <X className="mr-2 h-4 w-4" /> Abbrechen
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Field label="Projekt" required>
+            <TextInput value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })} />
+          </Field>
+          <Field label="Titel / Kurzbeschreibung" required>
+            <TextInput placeholder="z. B. Putzschaden im Flur" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </Field>
+          <Field label="Gewerk">
+            <SelectInput value={form.trade} onChange={(e) => setForm({ ...form, trade: e.target.value })}>
+              {tradeOptions.map((t) => <option key={t}>{t}</option>)}
+            </SelectInput>
+          </Field>
+          <Field label="Gebaeude / Bereich">
+            <TextInput placeholder="z. B. Haus A" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+          </Field>
+          <Field label="Etage">
+            <TextInput placeholder="z. B. 2. OG" value={form.floor} onChange={(e) => setForm({ ...form, floor: e.target.value })} />
+          </Field>
+          <Field label="Raum / Achse">
+            <TextInput placeholder="z. B. Bad A.18" value={form.room} onChange={(e) => setForm({ ...form, room: e.target.value })} />
+          </Field>
+          <Field label="Verantwortliche Firma">
+            <TextInput value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
+          </Field>
+          <Field label="Prioritaet">
+            <SelectInput value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+              {priorityOptions.map((p) => <option key={p}>{p}</option>)}
+            </SelectInput>
+          </Field>
+          <Field label="Status">
+            <SelectInput value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              {statusOptions.map((s) => <option key={s}>{s}</option>)}
+            </SelectInput>
+          </Field>
+          <Field label="Frist">
+            <TextInput type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
+          </Field>
+          <Field label="Melder">
+            <TextInput placeholder="z. B. Bauleitung" value={form.reporter} onChange={(e) => setForm({ ...form, reporter: e.target.value })} />
+          </Field>
+          <Field label="Fotos">
+            <div className="flex items-center gap-2">
+              <input id="photoInput" type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={handlePhotos} />
+              <Button type="button" variant="outline" className="w-full rounded-xl" onClick={() => document.getElementById("photoInput")?.click()}>
+                <Camera className="mr-2 h-4 w-4" /> Foto hochladen
+              </Button>
+            </div>
+          </Field>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Detaillierte Beschreibung">
+            <textarea
+              className="min-h-[110px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Was ist der Mangel? Wo genau? Welche Auswirkung?"
+            />
+          </Field>
+          <Field label="Interne Notizen">
+            <textarea
+              className="min-h-[110px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Absprachen, Planstand, Hinweise fuer Bericht..."
+            />
+          </Field>
+        </div>
+
+        {form.photos.length > 0 && (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            {form.photos.map((photo, index) => (
+              <div key={index} className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                <img src={photo.dataUrl} alt={photo.name} className="h-28 w-full object-cover" />
+                <button
+                  className="absolute right-2 top-2 rounded-full bg-white/90 p-1 shadow opacity-0 transition group-hover:opacity-100"
+                  onClick={() => removePhoto(index)}
+                  type="button"
+                >
+                  <Trash2 className="h-4 w-4 text-red-600" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          <Button onClick={onSubmit} className="rounded-xl bg-slate-950 px-5 hover:bg-slate-800">
+            <Plus className="mr-2 h-4 w-4" /> {editingId ? "Aenderungen speichern" : "Mangel speichern"}
+          </Button>
+          <Button variant="outline" className="rounded-xl" onClick={() => setForm(emptyForm)}>
+            Formular leeren
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DefectCard({ defect, onEdit, onDelete, onQuickStatus }) {
+  const due = daysUntil(defect.dueDate);
+  const overdue = due !== null && due < 0 && !["Erledigt", "Abgenommen"].includes(defect.status);
+  return (
+    <motion.div layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98 }}>
+      <Card className={classNames("overflow-hidden border shadow-sm transition hover:shadow-md", overdue ? "border-red-300" : "border-slate-200")}>
+        <CardContent className="p-0">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_230px]">
+            <div className="p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-white">{defect.no}</span>
+                    <span className={classNames("rounded-full border px-3 py-1 text-xs font-semibold", priorityClass(defect.priority))}>{defect.priority}</span>
+                    <span className={classNames("rounded-full border px-3 py-1 text-xs font-semibold", statusClass(defect.status))}>{defect.status}</span>
+                    {overdue && <span className="rounded-full bg-red-600 px-3 py-1 text-xs font-semibold text-white">Ueberfaellig</span>}
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-950">{defect.title}</h3>
+                  <p className="mt-1 max-w-3xl text-sm text-slate-600">{defect.description || "Keine Beschreibung hinterlegt."}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="rounded-xl" onClick={() => onEdit(defect)}>Bearbeiten</Button>
+                  <Button variant="outline" className="rounded-xl text-red-600 hover:text-red-700" onClick={() => onDelete(defect.id)}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-slate-700 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3"><MapPin className="h-4 w-4" /> {defect.location || "-"} / {defect.floor || "-"} / {defect.room || "-"}</div>
+                <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3"><Hammer className="h-4 w-4" /> {defect.trade}</div>
+                <div className="rounded-xl bg-slate-50 p-3"><b>Firma:</b> {defect.company || "-"}</div>
+                <div className="rounded-xl bg-slate-50 p-3"><b>Frist:</b> {dateDE(defect.dueDate)}</div>
+              </div>
+
+              {defect.notes && <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600"><b>Notiz:</b> {defect.notes}</div>}
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-slate-600">Status schnell setzen:</span>
+                {statusOptions.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => onQuickStatus(defect.id, s)}
+                    className={classNames("rounded-full border px-3 py-1 text-xs font-semibold transition", defect.status === s ? statusClass(s) : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t bg-slate-50 p-4 lg:border-l lg:border-t-0">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-700">Fotos</span>
+                <ImageIcon className="h-4 w-4 text-slate-400" />
+              </div>
+              {defect.photos?.length ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {defect.photos.slice(0, 4).map((p, i) => <img key={i} src={p.dataUrl} alt={p.name} className="h-20 w-full rounded-xl object-cover" />)}
+                </div>
+              ) : (
+                <div className="flex h-32 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white text-center text-sm text-slate-400">
+                  Keine Fotos hinterlegt
+                </div>
+              )}
+              <div className="mt-3 text-xs text-slate-500">
+                Erstellt: {dateDE(defect.createdAt)}<br />Aktualisiert: {dateDE(defect.updatedAt)}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+export default function BaustellenMaengelApp() {
+  const [defects, setDefects] = useState([]);
+  const [form, setForm] = useState(emptyForm);
+  const [editingId, setEditingId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("Alle");
+  const [priorityFilter, setPriorityFilter] = useState("Alle");
+  const [tradeFilter, setTradeFilter] = useState("Alle");
+  const [sort, setSort] = useState("createdDesc");
+  const importRef = useRef(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try { setDefects(JSON.parse(saved)); return; } catch {}
+    }
+    setDefects(demoDefects);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(defects));
+  }, [defects]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = defects.filter((d) => {
+      const text = [d.no, d.project, d.title, d.description, d.location, d.floor, d.room, d.trade, d.company, d.status, d.priority].join(" ").toLowerCase();
+      return (!q || text.includes(q))
+        && (statusFilter === "Alle" || d.status === statusFilter)
+        && (priorityFilter === "Alle" || d.priority === priorityFilter)
+        && (tradeFilter === "Alle" || d.trade === tradeFilter);
+    });
+    list = [...list].sort((a, b) => {
+      if (sort === "createdAsc") return new Date(a.createdAt) - new Date(b.createdAt);
+      if (sort === "dueAsc") return new Date(a.dueDate || "2999-01-01") - new Date(b.dueDate || "2999-01-01");
+      if (sort === "priority") return priorityOptions.indexOf(b.priority) - priorityOptions.indexOf(a.priority);
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+    return list;
+  }, [defects, query, statusFilter, priorityFilter, tradeFilter, sort]);
+
+  const stats = useMemo(() => ({
+    total: defects.length,
+    open: defects.filter((d) => d.status === "Offen").length,
+    critical: defects.filter((d) => ["Hoch", "Kritisch"].includes(d.priority) && !["Erledigt", "Abgenommen"].includes(d.status)).length,
+    done: defects.filter((d) => ["Erledigt", "Abgenommen"].includes(d.status)).length,
+  }), [defects]);
+
+  function submit() {
+    if (!form.project.trim() || !form.title.trim()) {
+      alert("Bitte mindestens Projekt und Titel ausfuellen.");
+      return;
+    }
+    const now = new Date().toISOString();
+    if (editingId) {
+      setDefects((items) => items.map((d) => d.id === editingId ? {
+        ...d,
+        ...form,
+        updatedAt: now,
+        history: [...(d.history || []), `Bearbeitet am ${dateDE(now)}`],
+      } : d));
+      setEditingId(null);
+    } else {
+      setDefects((items) => [{
+        ...form,
+        id: crypto.randomUUID(),
+        no: nextNumber(items),
+        createdAt: now,
+        updatedAt: now,
+        history: ["Mangel angelegt"],
+      }, ...items]);
+    }
+    setForm(emptyForm);
+  }
+
+  function edit(defect) {
+    setEditingId(defect.id);
+    setForm({
+      project: defect.project || "",
+      title: defect.title || "",
+      description: defect.description || "",
+      location: defect.location || "",
+      floor: defect.floor || "",
+      room: defect.room || "",
+      trade: defect.trade || "Sonstiges",
+      company: defect.company || "",
+      priority: defect.priority || "Mittel",
+      status: defect.status || "Offen",
+      dueDate: defect.dueDate || "",
+      reporter: defect.reporter || "",
+      notes: defect.notes || "",
+      photos: defect.photos || [],
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function remove(id) {
+    if (confirm("Diesen Mangel wirklich loeschen?")) {
+      setDefects((items) => items.filter((d) => d.id !== id));
+    }
+  }
+
+  function quickStatus(id, status) {
+    setDefects((items) => items.map((d) => d.id === id ? {
+      ...d,
+      status,
+      updatedAt: new Date().toISOString(),
+      history: [...(d.history || []), `Status auf ${status} gesetzt`],
+    } : d));
+  }
+
+  async function importJson(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) throw new Error("JSON muss eine Liste sein");
+      setDefects(data);
+    } catch (err) {
+      alert("Import fehlgeschlagen: " + err.message);
+    }
+    e.target.value = "";
+  }
+
+  function resetDemo() {
+    if (confirm("Alle aktuellen Daten loeschen und Demo-Daten laden?")) {
+      setDefects(demoDefects);
+      setForm(emptyForm);
+      setEditingId(null);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-white to-slate-100 p-4 text-slate-900 md:p-8">
+      <div className="mx-auto max-w-7xl">
+        <header className="mb-6 overflow-hidden rounded-[2rem] bg-slate-950 text-white shadow-2xl shadow-slate-300">
+          <div className="grid gap-6 p-6 md:grid-cols-[1fr_auto] md:p-8">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-sm text-slate-200">
+                <ClipboardList className="h-4 w-4" /> Baustellen-Tool Prototyp
+              </div>
+              <h1 className="text-3xl font-black tracking-tight md:text-5xl">Maengelerfassung</h1>
+              <p className="mt-3 max-w-2xl text-slate-300">
+                Offline testbare Web-App mit Mangelanlage, Fotoupload, Status, Filtern, CSV/JSON Export und Druckansicht. Daten werden lokal im Browser gespeichert.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2 md:justify-end">
+              <Button className="rounded-xl bg-white text-slate-950 hover:bg-slate-100" onClick={() => exportCsv(filtered)}>
+                <Download className="mr-2 h-4 w-4" /> CSV
+              </Button>
+              <Button className="rounded-xl bg-white text-slate-950 hover:bg-slate-100" onClick={() => exportJson(defects)}>
+                <FileText className="mr-2 h-4 w-4" /> JSON
+              </Button>
+              <Button className="rounded-xl bg-white text-slate-950 hover:bg-slate-100" onClick={() => window.print()}>
+                <Printer className="mr-2 h-4 w-4" /> Drucken
+              </Button>
+            </div>
+          </div>
+        </header>
+
+        <section className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <StatCard title="Gesamt" value={stats.total} icon={ClipboardList} tone="slate" />
+          <StatCard title="Offen" value={stats.open} icon={AlertTriangle} tone="red" />
+          <StatCard title="Hoch/Kritisch" value={stats.critical} icon={Hammer} tone="amber" />
+          <StatCard title="Erledigt" value={stats.done} icon={CheckCircle2} tone="emerald" />
+        </section>
+
+        <DefectForm form={form} setForm={setForm} onSubmit={submit} editingId={editingId} onCancel={() => { setEditingId(null); setForm(emptyForm); }} />
+
+        <Card className="my-6 border-0 shadow-xl shadow-slate-200/70">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1.5fr_repeat(4,1fr)_auto]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <TextInput className="pl-9" placeholder="Suchen nach Nr, Ort, Gewerk, Firma..." value={query} onChange={(e) => setQuery(e.target.value)} />
+              </div>
+              <SelectInput value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option>Alle</option>{statusOptions.map((s) => <option key={s}>{s}</option>)}
+              </SelectInput>
+              <SelectInput value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+                <option>Alle</option>{priorityOptions.map((p) => <option key={p}>{p}</option>)}
+              </SelectInput>
+              <SelectInput value={tradeFilter} onChange={(e) => setTradeFilter(e.target.value)}>
+                <option>Alle</option>{tradeOptions.map((t) => <option key={t}>{t}</option>)}
+              </SelectInput>
+              <SelectInput value={sort} onChange={(e) => setSort(e.target.value)}>
+                <option value="createdDesc">Neueste zuerst</option>
+                <option value="createdAsc">Aelteste zuerst</option>
+                <option value="dueAsc">Frist zuerst</option>
+                <option value="priority">Prioritaet zuerst</option>
+              </SelectInput>
+              <div className="flex gap-2">
+                <input ref={importRef} type="file" accept="application/json" onChange={importJson} className="hidden" />
+                <Button variant="outline" className="rounded-xl" onClick={() => importRef.current?.click()}><Upload className="h-4 w-4" /></Button>
+                <Button variant="outline" className="rounded-xl" onClick={resetDemo}><Filter className="h-4 w-4" /></Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <main className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold">Maengelliste</h2>
+            <span className="rounded-full bg-white px-3 py-1 text-sm text-slate-600 shadow-sm">{filtered.length} Treffer</span>
+          </div>
+          <AnimatePresence mode="popLayout">
+            {filtered.map((defect) => (
+              <DefectCard key={defect.id} defect={defect} onEdit={edit} onDelete={remove} onQuickStatus={quickStatus} />
+            ))}
+          </AnimatePresence>
+          {filtered.length === 0 && (
+            <div className="rounded-[2rem] border border-dashed border-slate-300 bg-white p-12 text-center text-slate-500">
+              Keine Maengel gefunden. Filter zuruecksetzen oder neuen Mangel anlegen.
+            </div>
+          )}
+        </main>
+
+        <footer className="mt-8 rounded-3xl bg-white p-5 text-sm text-slate-500 shadow-sm">
+          Hinweis: Das ist ein Frontend-Prototyp. Fuer echten Baustellenbetrieb brauchst du spaeter Login, Rollen, zentrale Datenbank, Backups, Rechteverwaltung und DSGVO-Konzept.
+        </footer>
+      </div>
+    </div>
+  );
+}
